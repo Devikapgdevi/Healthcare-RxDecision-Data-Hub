@@ -38,7 +38,7 @@ jobs:
     name: Deploy to Snowflake
     needs: validate
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment || 'development' }}
+    # environment: ${{ github.event.inputs.environment || 'development' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -47,9 +47,9 @@ jobs:
       - run: pip install snowflake-connector-python
       - name: Deploy SQL Scripts
         env:
-          SNOWFLAKE_ACCOUNT: ${{ secrets.tyb42779 }}
-          SNOWFLAKE_USER: ${{ secrets.DEVIKAPG }}
-          SNOWFLAKE_PASSWORD: ${{ secrets.Devikasnowflake@1 }}
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
         run: |
           python << 'EOF'
           import snowflake.connector, os
