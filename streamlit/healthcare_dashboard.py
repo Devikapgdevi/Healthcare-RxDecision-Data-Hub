@@ -5,7 +5,7 @@ import altair as alt
 session = get_active_session()
 
 st.set_page_config(page_title="Healthcare RxDecision Analytics", layout="wide")
-st.title("Healthcare RxDecision Analytics Platform")
+st.title("Healthcare RxDecision Data Hub")
 st.caption("Powered by Snowflake Marketplace - Definitive Healthcare RxDecision Insights")
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
