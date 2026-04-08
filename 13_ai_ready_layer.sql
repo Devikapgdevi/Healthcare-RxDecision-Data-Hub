@@ -1,0 +1,83 @@
+-- =============================================
+-- 13_AI_READY_LAYER.SQL
+-- Healthcare RxDecision Analytics Platform
+-- Platinum Layer - AI/ML Ready (standalone re-run)
+-- Run this to rebuild Platinum layer independently
+-- Depends on: Silver layer (TRANSFORM_DB), Gold layer (ANALYTICS_DB)
+-- Under 5K records per table
+-- =============================================
+
+USE ROLE ACCOUNTADMIN;
+USE DATABASE AI_READY_DB;
+USE WAREHOUSE COMPUTE_WH;
+
+-- =============================================
+-- FEATURE_STORE Schema
+-- =============================================
+CREATE SCHEMA IF NOT EXISTS FEATURE_STORE COMMENT = 'ML Feature Store';
+USE SCHEMA FEATURE_STORE;
+
+CREATE OR REPLACE TABLE ICU_FEATURE_STORE AS
+SELECT e.PATIENT_ID, p.AGE, p.GENDER, p.DIAGNOSIS, p.ICD_CODE, p.ICD_DESCRIPTION,
+    COUNT(*) AS TOTAL_EVENTS,
+    SUM(CASE WHEN e.IS_CRITICAL THEN 1 ELSE 0 END) AS CRITICAL_EVENTS,
+    AVG(e.HEART_RATE) AS AVG_HEART_RATE, MIN(e.HEART_RATE) AS MIN_HEART_RATE,
+    MAX(e.HEART_RATE) AS MAX_HEART_RATE, STDDEV(e.HEART_RATE) AS STD_HEART_RATE,
+    AVG(e.OXYGEN_LEVEL) AS AVG_OXYGEN, MIN(e.OXYGEN_LEVEL) AS MIN_OXYGEN,
+    MAX(e.OXYGEN_LEVEL) AS MAX_OXYGEN, STDDEV(e.OXYGEN_LEVEL) AS STD_OXYGEN,
+    DATEDIFF(DAY, MIN(e.EVENT_TIMESTAMP), MAX(e.EVENT_TIMESTAMP)) AS ICU_STAY_DAYS,
+    ROUND(SUM(CASE WHEN e.IS_CRITICAL THEN 1 ELSE 0 END)::FLOAT / NULLIF(COUNT(*), 0) * 100, 2) AS CRITICAL_EVENT_RATE,
+    CASE WHEN AVG(e.OXYGEN_LEVEL) < 90 OR AVG(e.HEART_RATE) > 110 THEN 'HIGH'
+         WHEN AVG(e.OXYGEN_LEVEL) < 94 OR AVG(e.HEART_RATE) > 100 THEN 'MEDIUM'
+         ELSE 'LOW' END AS RISK_SCORE,
+    CURRENT_TIMESTAMP() AS FEATURE_TIMESTAMP
+FROM TRANSFORM_DB.TRANSFORM_SCHEMA.CLEAN_ICU_EVENTS e
+JOIN TRANSFORM_DB.TRANSFORM_SCHEMA.CLEAN_PATIENT p ON e.PATIENT_ID = p.PATIENT_ID
+GROUP BY e.PATIENT_ID, p.AGE, p.GENDER, p.DIAGNOSIS, p.ICD_CODE, p.ICD_DESCRIPTION;
+
+CREATE OR REPLACE TABLE PATIENT_NOTES AS
+SELECT 'N' || LPAD(SEQ4()::STRING, 6, '0') AS NOTE_ID,
+    'P' || LPAD((MOD(ABS(RANDOM()), 2000) + 1)::STRING, 5, '0') AS PATIENT_ID,
+    CASE MOD(ABS(RANDOM()), 5)
+        WHEN 0 THEN 'Patient presents with chest pain and shortness of breath. ECG shows normal sinus rhythm.'
+        WHEN 1 THEN 'Follow-up visit for diabetes management. Blood sugar levels improving with current medication.'
+        WHEN 2 THEN 'Post-operative day 2. Wound healing well. No signs of infection.'
+        WHEN 3 THEN 'Patient reports dizziness and fatigue. Ordered blood work to check for anemia.'
+        ELSE 'Routine checkup. All vitals within normal range. Continue current treatment plan.' END AS NOTE_TEXT,
+    DATEADD(DAY, -MOD(ABS(RANDOM()), 90), CURRENT_DATE()) AS NOTE_DATE,
+    CASE MOD(ABS(RANDOM()), 4) WHEN 0 THEN 'Progress Note' WHEN 1 THEN 'Discharge Summary' WHEN 2 THEN 'Consultation' ELSE 'Lab Results' END AS NOTE_TYPE
+FROM TABLE(GENERATOR(ROWCOUNT => 2000));
+
+CREATE OR REPLACE TABLE PATIENT_EMBEDDINGS AS
+SELECT PATIENT_ID,
+    ARRAY_CONSTRUCT(UNIFORM(0::FLOAT,1::FLOAT,RANDOM()),UNIFORM(0::FLOAT,1::FLOAT,RANDOM()),
+        UNIFORM(0::FLOAT,1::FLOAT,RANDOM()),UNIFORM(0::FLOAT,1::FLOAT,RANDOM()),
+        UNIFORM(0::FLOAT,1::FLOAT,RANDOM()),UNIFORM(0::FLOAT,1::FLOAT,RANDOM()),
+        UNIFORM(0::FLOAT,1::FLOAT,RANDOM()),UNIFORM(0::FLOAT,1::FLOAT,RANDOM())) AS EMBEDDING_VECTOR,
+    CURRENT_TIMESTAMP() AS CREATED_AT
+FROM TRANSFORM_DB.TRANSFORM_SCHEMA.CLEAN_PATIENT;
+
+-- =============================================
+-- SEMANTIC_MODELS Schema
+-- =============================================
+CREATE SCHEMA IF NOT EXISTS SEMANTIC_MODELS COMMENT = 'Cortex Analyst Semantic Models';
+USE SCHEMA SEMANTIC_MODELS;
+
+CREATE OR REPLACE VIEW V_PATIENT_SEMANTIC AS
+SELECT p.PATIENT_ID AS "Patient ID", p.AGE AS "Age", p.GENDER AS "Gender", p.DIAGNOSIS AS "Diagnosis",
+    p.ICD_CODE AS "ICD Code", p.ICD_DESCRIPTION AS "ICD Description",
+    a.ICU_EVENT_COUNT AS "Total ICU Events",
+    a.CRITICAL_EVENT_COUNT AS "Critical Events",
+    ROUND(a.AVG_HEART_RATE, 1) AS "Average Heart Rate",
+    ROUND(a.AVG_OXYGEN_LEVEL, 1) AS "Average Oxygen Level",
+    (CASE WHEN p.AGE >= 65 THEN 1 ELSE 0 END)
+        + (CASE WHEN a.AVG_OXYGEN_LEVEL < 92 THEN 1 ELSE 0 END)
+        + (CASE WHEN a.AVG_HEART_RATE > 100 THEN 1 ELSE 0 END)
+        + (CASE WHEN a.CRITICAL_EVENT_COUNT > 5 THEN 1 ELSE 0 END) AS "Risk Score",
+    COALESCE(b.TOTAL_AMOUNT, 0) AS "Total Billing Amount",
+    CASE WHEN p.AGE >= 65 THEN 1 ELSE 0 END AS "Age Risk Flag",
+    CASE WHEN a.AVG_OXYGEN_LEVEL < 92 THEN 1 ELSE 0 END AS "Low Oxygen Risk Flag",
+    CASE WHEN a.AVG_HEART_RATE > 100 THEN 1 ELSE 0 END AS "High Heart Rate Risk Flag"
+FROM ANALYTICS_DB.ANALYTICS_SCHEMA.PATIENT_ANALYTICS a
+JOIN TRANSFORM_DB.TRANSFORM_SCHEMA.CLEAN_PATIENT p ON a.PATIENT_ID = p.PATIENT_ID
+LEFT JOIN ANALYTICS_DB.ANALYTICS_SCHEMA.BILLING_ANALYTICS b ON a.PATIENT_ID = b.PATIENT_ID;
